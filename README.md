@@ -1,7 +1,11 @@
-# cw-range-name-plugin
+# cw-range-name-plugin-linux-support 
 
 ## 简介
 ### 一个Class Widgets插件，为Class Widgets 带上随机点名功能
+
+## 修改内容：
+- 修复了在linux下无法运行的问题
+- 点名结果将通过CW的提醒功能直接播放
 
 ## 1.6版本更新
 - 修复了设置报错的问题
@@ -14,6 +18,7 @@
 - 将悬浮窗文字改为"点名"，减少了悬浮窗大小
 - 使用了洗牌算法，增加了随机性
 
-Powered By neke_lfj | RinLit @ 2025
+Powered By neke_lfj | RinLit @ 2025<br>
+Modified By YU322142 @2026
 
-QQ: 3614801070
+原作者提供的QQ: 3614801070

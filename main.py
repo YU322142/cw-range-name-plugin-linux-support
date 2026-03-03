@@ -2,15 +2,15 @@ import os
 import random
 import subprocess
 import platform
-import winreg
+from typing import Optional, List
 
 from qfluentwidgets import PrimaryPushButton, PushButton, DisplayLabel
 from qframelesswindow import FramelessDialog, FramelessWindow
 
 from .ClassWidgets.base import PluginBase, SettingsBase
 from PyQt5 import uic
-from PyQt5.QtCore import Qt, QPoint, pyqtSignal
-from PyQt5.QtGui import QFont, QMouseEvent
+from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QTimer
+from PyQt5.QtGui import QFont, QMouseEvent, QPalette, QColor
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -41,21 +41,31 @@ def read_names_from_file(file_path):
 class FloatingWindow(QWidget):
     closed = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, method=None):
         super().__init__()
+        self.method = method  # 保存method引用
         self.shuffled_names = []
         self.current_index = 0
         self.load_names()
         self.drag_pos = QPoint()
         self.mouse_press_pos = QPoint()
-        self.name_dialog = None
         self.init_ui()
 
     def init_ui(self):
         """初始化界面组件"""
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowOpacity(0.8)
+        # 设置窗口标志实现全局置顶
+        # 组合使用多种标志确保在所有系统上都能置顶
+        self.setWindowFlags(
+            Qt.FramelessWindowHint |  # 无边框
+            Qt.WindowStaysOnTopHint |  # 始终置顶（最重要）
+            Qt.Tool |  # 工具窗口（在任务栏不显示）
+            Qt.WindowDoesNotAcceptFocus  # 不获取焦点，避免干扰其他窗口
+        )
+        
+        # 设置窗口属性
+        self.setAttribute(Qt.WA_TranslucentBackground)  # 透明背景
+        self.setAttribute(Qt.WA_ShowWithoutActivating)  # 显示时不激活
+        self.setWindowOpacity(0.8)  # 设置透明度
 
         self.label = QLabel("点名", self)
         self.label.setAlignment(Qt.AlignCenter)
@@ -71,6 +81,9 @@ class FloatingWindow(QWidget):
         self.label.setFixedSize(50, 40)
         self.setFixedSize(50, 40)
         self.move_to_corner()
+        
+        # 设置鼠标追踪，确保鼠标事件正常工作
+        self.setMouseTracking(True)
 
     def load_names(self):
         """加载名单并初始化洗牌队列"""
@@ -88,15 +101,22 @@ class FloatingWindow(QWidget):
         """移动窗口到屏幕右下角"""
         screen = QDesktopWidget().availableGeometry()
         taskbar_height = 72
-        x = screen.width() - self.width() - 1
-        y = screen.height() - taskbar_height
+        x = screen.width() - self.width() - 50
+        y = screen.height() - self.width() -200
         self.move(x, y)
+        
+        # 确保窗口在最顶层
+        self.raise_()
+        self.activateWindow()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             self.drag_pos = event.globalPos() - self.frameGeometry().topLeft()
             self.mouse_press_pos = event.globalPos()
             event.accept()
+            
+            # 点击时也确保窗口置顶
+            self.raise_()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if event.buttons() == Qt.LeftButton:
@@ -109,15 +129,70 @@ class FloatingWindow(QWidget):
                 self.show_random_name()
             event.accept()
 
+    def show(self):
+        """重写show方法，确保窗口显示时置顶"""
+        super().show()
+        # 显示后立即置顶
+        self.raise_()
+        self.activateWindow()
+
     def show_random_name(self):
-        """显示随机点名结果"""
+        """显示随机点名结果 - 通过发送通知的方式"""
+        if not self.method:
+            print("错误: 未提供method参数，无法发送通知")
+            return
+            
         name = self.get_next_name()
-        if self.name_dialog is None:
-            self.name_dialog = NameDialog(name, self)
-        else:
-            self.name_dialog.update_content(name)
-            self.name_dialog.move_center()
-        self.name_dialog.show()
+        
+        # 获取插件目录，用于图标路径
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # 构建图标路径
+        icon_path = os.path.join(plugin_dir, "icon.png")
+        
+        # 如果图标文件不存在，可以尝试其他路径或使用默认值
+        if not os.path.exists(icon_path):
+            # 尝试查找其他可能的图标文件
+            possible_icons = ["icon.png", "icon.jpg", "icon.jpeg", "icon.gif", "logo.png"]
+            for icon_file in possible_icons:
+                check_path = os.path.join(plugin_dir, icon_file)
+                if os.path.exists(check_path):
+                    icon_path = check_path
+                    break
+            else:
+                # 如果都没有找到，可以使用空字符串或默认图标
+                icon_path = ""  # 或者提供默认图标路径
+        
+        # 发送通知
+        try:
+            self.method.send_notification(
+                state=4,  # 自定义通知
+                lesson_name="",  # 自定义通知不需要课程名称
+                title="随机点名",  # 通知标题
+                subtitle="点名结果",  # 通知副标题
+                content=f"{name}",  # 通知内容
+                icon="",  # 图标路径
+                duration=5000  # 通知显示5秒（5000毫秒）
+            )
+        except Exception as e:
+            print(f"发送通知失败: {e}")
+            # 如果发送通知失败，可以尝试备用方法（例如简单的对话框显示）
+            self.show_fallback_dialog(name)
+
+    def show_fallback_dialog(self, name):
+        """发送通知失败时的备选方案"""
+        try:
+            from PyQt5.QtWidgets import QMessageBox
+            msg_box = QMessageBox()
+            msg_box.setWindowTitle("随机点名结果")
+            msg_box.setText(f"本次点到的同学是：{name}")
+            msg_box.setStandardButtons(QMessageBox.Ok)
+            
+            # 让弹窗也置顶显示
+            msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
+            msg_box.exec_()
+        except:
+            print(f"点名结果: {name}")
 
     def get_next_name(self):
         """获取下一个不重复的名字"""
@@ -136,99 +211,17 @@ class FloatingWindow(QWidget):
         super().closeEvent(event)
 
 
-class NameDialog(QDialog):
-    def __init__(self, name, parent=None):
-        super().__init__(parent)
-        self.init_ui(name)
-        self.move_center()
-        self.apply_theme_style()
-
-    def init_ui(self, name):
-        # 在 NameDialog 的 __init__ 方法中添加：
-        self.setWindowTitle("随机点名结果")
-        self.resize(600, 400)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 0, 0, 0)
-        self.name_label = DisplayLabel(name)
-        self.name_label.setAlignment(Qt.AlignCenter)
-        self.name_label.setFont(QFont("黑体", 150))
-
-        self.confirm_btn = PushButton()
-        self.confirm_btn.setText("确定")
-        self.confirm_btn.setFixedSize(100, 40)
-        self.confirm_btn.clicked.connect(self.close)
-
-        layout.addWidget(self.name_label)
-        layout.addWidget(self.confirm_btn, alignment=Qt.AlignCenter)
-        
-    def apply_theme_style(self):
-        """Windows专用主题检测"""
-        try:
-            # 访问Windows注册表获取主题信息
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
-            ) as key:
-                # 读取AppsUseLightTheme的值（1=浅色，0=深色）
-                theme_value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-                is_light_theme = theme_value == 1
-        except Exception as e:
-            print(f"主题检测失败，使用默认浅色: {str(e)}")
-            is_light_theme = True
-
-        # 设置对应主题样式
-        if is_light_theme:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #FFFFFF;
-                }
-                DisplayLabel {
-                    color: #000000 !important;
-                }
-                QPushButton {
-                    background-color: #F0F0F0;
-                    color: #000000;
-                    border: 1px solid #CCCCCC;
-                    border-radius: 4px;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #2B2B2B;
-                }
-                DisplayLabel {
-                    color: #FFFFFF !important;
-                }
-                QPushButton {
-                    background-color: #404040;
-                    color: #FFFFFF;
-                    border: 1px solid #505050;
-                    border-radius: 4px;
-                }
-            """)
-
-
-    def update_content(self, new_name):
-        self.name_label.setText(new_name)
-
-    def move_center(self):
-        """移动窗口到屏幕中心"""
-        screen = QDesktopWidget().availableGeometry()
-        x = (screen.width() - self.width()) // 2
-        y = (screen.height() - self.height()) // 2
-        self.move(x, y)
-
-
 class Plugin(PluginBase):
     def __init__(self, cw_contexts, method):
         super().__init__(cw_contexts, method)
         self.floating_window = None
+        self.plugin_dir = self.cw_contexts['PLUGIN_PATH']  # 保存插件目录
 
     def execute(self):
         """启动插件主功能"""
         if not self.floating_window:
-            self.floating_window = FloatingWindow()
+            # 创建浮动窗口时传入method参数
+            self.floating_window = FloatingWindow(method=self.method)
         self.floating_window.show()
 
 
@@ -242,18 +235,60 @@ class Settings(SettingsBase):
     def open_names_file(self):
         """打开名单文件进行编辑"""
         file_path = os.path.join(self.PATH, "names.txt")
-        if platform.system() == "Windows":
-            os.startfile(file_path)
-        elif platform.system() == "Linux":
-            subprocess.call(["xdg-open", file_path])
-        elif platform.system() == "Darwin":
-            subprocess.call(["open", file_path])
+        
+        try:
+            if platform.system() == "Windows":
+                os.startfile(file_path)
+            elif platform.system() == "Linux":
+                # 尝试多种Linux文件打开方式
+                openers = ['xdg-open', 'gnome-open', 'kde-open', 'exo-open', 'gio-open']
+                for opener in openers:
+                    try:
+                        subprocess.Popen([opener, file_path])
+                        break
+                    except FileNotFoundError:
+                        continue
+                else:
+                    # 如果都没有，尝试使用编辑器
+                    editors = ['gedit', 'kate', 'mousepad', 'pluma', 'xed']
+                    for editor in editors:
+                        try:
+                            subprocess.Popen([editor, file_path])
+                            break
+                        except FileNotFoundError:
+                            continue
+            elif platform.system() == "Darwin":
+                subprocess.Popen(['open', file_path])
+        except Exception as e:
+            print(f"打开文件失败: {e}")
 
 
+# 独立运行时的测试代码
 if __name__ == "__main__":
     import sys
-
+    
+    # 创建一个模拟的method对象用于测试
+    class MockMethod:
+        def send_notification(self, state, lesson_name, title, subtitle, content, icon, duration):
+            print("\n" + "="*50)
+            print("模拟通知发送:")
+            print(f"状态: {state}")
+            print(f"标题: {title}")
+            print(f"副标题: {subtitle}")
+            print(f"内容: {content}")
+            print(f"图标: {icon}")
+            print(f"持续时间: {duration}毫秒")
+            print("="*50 + "\n")
+    
     app = QApplication(sys.argv)
-    window = FloatingWindow()
-    window.show()
+    
+    # 创建一个模拟的cw_contexts字典
+    mock_cw_contexts = {
+        'PLUGIN_PATH': os.path.dirname(os.path.abspath(__file__))
+    }
+    
+    # 创建插件实例
+    plugin = Plugin(mock_cw_contexts, MockMethod())
+    plugin.execute()
+    
     sys.exit(app.exec_())
