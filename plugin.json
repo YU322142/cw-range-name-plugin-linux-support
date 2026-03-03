@@ -1,7 +1,7 @@
 {
     "name": "随机点名（）",
     "description": "为Class Widgets 带上随机点名功能",
-    "version": "1.6",
+    "version": "1.7",
     "plugin_ver": 2,
     "author": "YU322142 | neko_lfj | RinLit",
     "settings": true,
